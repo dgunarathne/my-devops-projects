@@ -1,0 +1,92 @@
+name: Enterprise Terraform Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment (dev, prod, staging, etc)"
+        required: true
+        default: "dev"
+
+jobs:
+
+  terraform:
+
+    runs-on: ubuntu-latest
+
+    env:
+      TF_VAR_environment: ${{ github.event.inputs.environment }}
+      ENV_FILE: environments/${{ github.event.inputs.environment }}.tfvars
+
+    steps:
+
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    # -------------------------------
+    # 1️⃣ Code Test (Lint)
+    # -------------------------------
+    - name: Terraform Lint (tflint)
+      uses: terraform-linters/setup-tflint@v3
+
+    - name: Run TFLint
+      run: |
+        tflint --init
+        tflint
+
+    # -------------------------------
+    # 2️⃣ Security Scan
+    # -------------------------------
+    - name: Run Checkov Security Scan
+      uses: bridgecrewio/checkov-action@v12
+      with:
+        directory: .
+        quiet: true
+
+    # -------------------------------
+    # 3️⃣ Init
+    # -------------------------------
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+
+    - name: Terraform Init
+      run: terraform init -upgrade
+
+    # -------------------------------
+    # 4️⃣ Format Check
+    # -------------------------------
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+
+    # -------------------------------
+    # 5️⃣ Validate
+    # -------------------------------
+    - name: Terraform Validate
+      run: terraform validate
+
+    # -------------------------------
+    # 6️⃣ Plan
+    # -------------------------------
+    - name: Terraform Plan
+      run: |
+        terraform plan \
+        -var-file=${ENV_FILE} \
+        -out=tfplan
+
+    - name: Upload Plan Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: terraform-plan-${{ github.event.inputs.environment }}
+        path: tfplan
+
+    # -------------------------------
+    # 7️⃣ Apply (Manual Approval for Prod)
+    # -------------------------------
+
+    - name: Terraform Apply
+      if: github.event.inputs.environment != 'prod'
+      run: terraform apply -auto-approve tfplan
+
+    - name: Terraform Apply (Prod - Requires Approval)
+      if: github.event.inputs.environment == 'prod'
+      run: terraform apply tfplan
